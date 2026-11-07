@@ -1,0 +1,6 @@
+# Copy to .dev.vars (gitignored) and fill in. Use a separate DEV bot token here.
+BOT_TOKEN="123456:ABC-your-botfather-token"
+# Random string; generate with: openssl rand -hex 32
+WEBHOOK_SECRET="replace-me"
+# The JSON "result" object from https://api.telegram.org/bot<BOT_TOKEN>/getMe (single line)
+BOT_INFO='{"id":0,"is_bot":true,"first_name":"...","username":"...","can_join_groups":true,"can_read_all_group_messages":false,"supports_inline_queries":false}'
