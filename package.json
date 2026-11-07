@@ -1,35 +1,45 @@
 {
 	"name": "bluedart-telegram-tracker",
-	"version": "0.0.0",
+	"version": "1.0.0",
+	"description": "A Telegram bot that tracks BlueDart shipments and notifies you on every update. Runs on Cloudflare Workers + D1.",
+	"license": "MIT",
 	"private": true,
+	"type": "module",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/visveshkhanna/bluedart-telegram-tracker.git"
+	},
+	"homepage": "https://github.com/visveshkhanna/bluedart-telegram-tracker#readme",
+	"bugs": {
+		"url": "https://github.com/visveshkhanna/bluedart-telegram-tracker/issues"
+	},
+	"keywords": [
+		"telegram-bot",
+		"bluedart",
+		"shipment-tracking",
+		"cloudflare-workers",
+		"d1",
+		"grammy"
+	],
+	"engines": {
+		"node": ">=24"
+	},
 	"scripts": {
-		"deploy": "npm run db:migrate:remote && wrangler deploy",
 		"dev": "wrangler dev --test-scheduled",
-		"start": "wrangler dev --test-scheduled",
+		"deploy": "npm run db:migrate:remote && wrangler deploy",
 		"test": "vitest run",
-		"cf-typegen": "wrangler types --env-file .dev.vars.example",
-		"webhook": "node scripts/webhook.mjs",
 		"test:watch": "vitest",
 		"typecheck": "tsc --noEmit && tsc --noEmit -p test",
-		"check": "npm run format:check && npm run typecheck && npm test && wrangler deploy --dry-run",
-		"db:migrate:local": "wrangler d1 migrations apply DB --local",
-		"db:migrate:remote": "wrangler d1 migrations apply DB --remote",
-		"secrets:prod": "wrangler secret bulk .prod.vars",
-		"webhook:prod": "node --env-file=.prod.vars scripts/webhook.mjs",
 		"format": "prettier --write .",
 		"format:check": "prettier --check .",
-		"postinstall": "npm run cf-typegen"
-	},
-	"devDependencies": {
-		"@cloudflare/vitest-plugin": "^1.4.3",
-		"typescript": "^5.5.2",
-		"vitest": "~5.0.3",
-		"wrangler": "^4",
-		"prettier": "3.9.10"
-	},
-	"dependencies": {
-		"grammy": "^1.46.0",
-		"node-html-parser": "9.0.5"
+		"check": "npm run format:check && npm run typecheck && npm test && wrangler deploy --dry-run",
+		"cf-typegen": "wrangler types --env-file .dev.vars.example",
+		"postinstall": "npm run cf-typegen",
+		"db:migrate:local": "wrangler d1 migrations apply DB --local",
+		"db:migrate:remote": "wrangler d1 migrations apply DB --remote",
+		"webhook": "node scripts/webhook.mjs",
+		"webhook:prod": "node --env-file=.prod.vars scripts/webhook.mjs",
+		"secrets:prod": "wrangler secret bulk .prod.vars"
 	},
 	"cloudflare": {
 		"bindings": {
@@ -43,5 +53,16 @@
 				"description": "D1 database that stores users, shipments and scan history."
 			}
 		}
+	},
+	"dependencies": {
+		"grammy": "^1.46.0",
+		"node-html-parser": "9.0.5"
+	},
+	"devDependencies": {
+		"@cloudflare/vitest-plugin": "^1.4.3",
+		"prettier": "3.9.10",
+		"typescript": "^5.5.2",
+		"vitest": "~5.0.3",
+		"wrangler": "^4"
 	}
 }
