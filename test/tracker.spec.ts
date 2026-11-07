@@ -1,137 +1,172 @@
 import { env } from "cloudflare:test";
-import { Api, GrammyError } from "grammy";
 import { beforeEach, describe, expect, it } from "vitest";
-import { addShipment, listActiveShipments, upsertUser } from "../src/db/shipments";
-import type { TrackingProvider, TrackingResult } from "../src/tracker/provider";
+import { addShipment, getShipment, listActiveShipments, upsertUser } from "../src/db/shipments";
+import { getRecentScans } from "../src/db/tracking";
+import { applyTrackingResult } from "../src/tracker/apply";
 import { runTracker } from "../src/tracker/run";
+import {
+	delivered,
+	fakeApi,
+	fakeProvider,
+	found,
+	inTransit,
+	outForDelivery,
+	pickedUp,
+	resetDb,
+	type Sent,
+} from "./helpers";
 
 const CHAT = 7;
 const AWB = "12345678901";
 
-type Sent = { chatId: number; text: string };
-
-/** An Api whose sendMessage is intercepted; `fail` decides per call whether to throw. */
-function fakeApi(sent: Sent[], fail?: () => GrammyError | undefined): Api {
-	const api = new Api("123456:TEST-TOKEN");
-	api.config.use(async (_prev, method, payload) => {
-		if (method !== "sendMessage") return { ok: true, result: true } as never;
-		const error = fail?.();
-		if (error) return { ok: false, error_code: error.error_code, description: error.description, parameters: error.parameters } as never;
-		const p = payload as { chat_id: number; text: string };
-		sent.push({ chatId: p.chat_id, text: p.text });
-		return { ok: true, result: { message_id: 1 } } as never;
-	});
-	return api;
-}
-
-function provider(results: Record<string, TrackingResult | null | Error>): TrackingProvider {
-	return {
-		async fetchStatus(awb) {
-			const r = results[awb];
-			if (r instanceof Error) throw r;
-			return r ?? null;
-		},
-	};
-}
-
-const inTransit: TrackingResult = { status: "IN_TRANSIT", statusText: "In Transit", location: "Mumbai Hub", isTerminal: false };
-const delivered: TrackingResult = { status: "DELIVERED", statusText: "Delivered", location: "Bengaluru", isTerminal: true };
-
 async function shipment() {
-	return env.DB.prepare("SELECT * FROM shipments WHERE awb = ?").bind(AWB).first<Record<string, unknown>>();
+	return (await getShipment(env.DB, CHAT, AWB))!;
+}
+
+/** Stores a baseline like /track does (no notification). */
+async function baseline(result = found([pickedUp], "12 Mar 2026")) {
+	await applyTrackingResult(env.DB, await shipment(), result, { notify: false });
 }
 
 beforeEach(async () => {
-	await env.DB.batch([
-		env.DB.prepare("DELETE FROM status_events"),
-		env.DB.prepare("DELETE FROM shipments"),
-		env.DB.prepare("DELETE FROM users"),
-	]);
+	await resetDb(env.DB);
 	await upsertUser(env.DB, { chatId: CHAT });
 	await addShipment(env.DB, CHAT, AWB, "Shoes");
 });
 
 describe("runTracker", () => {
-	it("with no status (stub provider): only updates last_checked_at", async () => {
+	it("does nothing visible when BlueDart has no record yet", async () => {
 		const sent: Sent[] = [];
-		const summary = await runTracker({ db: env.DB, api: fakeApi(sent), provider: provider({}) });
+		const summary = await runTracker({ db: env.DB, api: fakeApi(sent), provider: fakeProvider({}) });
 
-		expect(summary).toMatchObject({ checked: 1, noStatus: 1, changed: 0 });
+		expect(summary).toMatchObject({ checked: 1, notFound: 1, changed: 0 });
 		expect(sent).toHaveLength(0);
-		expect((await shipment())?.last_checked_at).not.toBeNull();
+		expect((await shipment()).lastCheckedAt).not.toBeNull();
 	});
 
-	it("notifies on change, stays quiet when unchanged", async () => {
+	it("notifies about new scans only, newest first, and stores them", async () => {
+		await baseline();
 		const sent: Sent[] = [];
-		const api = fakeApi(sent);
+		const summary = await runTracker({
+			db: env.DB,
+			api: fakeApi(sent),
+			provider: fakeProvider({ [AWB]: found([outForDelivery, inTransit, pickedUp], "12 Mar 2026") }),
+		});
 
-		const first = await runTracker({ db: env.DB, api, provider: provider({ [AWB]: inTransit }) });
-		expect(first).toMatchObject({ changed: 1, notified: 1 });
-		expect(sent[0].chatId).toBe(CHAT);
-		expect(sent[0].text).toContain("<b>Shoes</b>");
-		expect(sent[0].text).toContain("In Transit");
-		expect(await shipment()).toMatchObject({ last_status: "IN_TRANSIT", last_location: "Mumbai Hub", is_active: 1 });
-
-		const second = await runTracker({ db: env.DB, api, provider: provider({ [AWB]: inTransit }) });
-		expect(second).toMatchObject({ checked: 1, changed: 0 });
+		expect(summary).toMatchObject({ changed: 1, notified: 1 });
 		expect(sent).toHaveLength(1);
+		const text = sent[0].text;
+		expect(text).toContain("<b>Shoes</b>");
+		expect(text.indexOf("Out For Delivery")).toBeLessThan(text.indexOf("In Transit"));
+		expect(text).not.toContain("Shipment Picked Up");
+		expect(text).toContain("Expected delivery: <b>12 Mar 2026</b>");
+
+		expect(await shipment()).toMatchObject({ lastStatusText: "Out For Delivery", lastLocation: "Pune", isActive: true });
+		expect((await getRecentScans(env.DB, (await shipment()).id, 10)).map((s) => s.details)).toEqual([
+			"Out For Delivery",
+			"In Transit",
+			"Shipment Picked Up",
+		]);
 	});
 
-	it("stops tracking on a terminal status", async () => {
+	it("stays quiet when nothing changed", async () => {
+		await baseline();
 		const sent: Sent[] = [];
-		await runTracker({ db: env.DB, api: fakeApi(sent), provider: provider({ [AWB]: delivered }) });
+		const summary = await runTracker({
+			db: env.DB,
+			api: fakeApi(sent),
+			provider: fakeProvider({ [AWB]: found([pickedUp], "12 Mar 2026") }),
+		});
+		expect(summary).toMatchObject({ checked: 1, changed: 0 });
+		expect(sent).toHaveLength(0);
+	});
+
+	it("notifies when only the expected delivery date changes", async () => {
+		await baseline();
+		const sent: Sent[] = [];
+		await runTracker({ db: env.DB, api: fakeApi(sent), provider: fakeProvider({ [AWB]: found([pickedUp], "14 Mar 2026") }) });
+
+		expect(sent[0].text).toContain("Expected delivery changed: 12 Mar 2026 → <b>14 Mar 2026</b>");
+		expect((await shipment()).expectedDeliveryDate).toBe("14 Mar 2026");
+	});
+
+	it("ignores a missing delivery date instead of wiping the stored one", async () => {
+		await baseline();
+		const sent: Sent[] = [];
+		await runTracker({ db: env.DB, api: fakeApi(sent), provider: fakeProvider({ [AWB]: found([pickedUp], null) }) });
+
+		expect(sent).toHaveLength(0);
+		expect((await shipment()).expectedDeliveryDate).toBe("12 Mar 2026");
+	});
+
+	it("stops tracking once delivered", async () => {
+		await baseline();
+		const sent: Sent[] = [];
+		await runTracker({
+			db: env.DB,
+			api: fakeApi(sent),
+			provider: fakeProvider({ [AWB]: found([delivered, pickedUp], "12 Mar 2026", true) }),
+		});
 
 		expect(sent[0].text).toContain("stopped tracking");
+		expect(sent[0].text).not.toContain("Expected delivery");
 		expect(await listActiveShipments(env.DB, CHAT)).toHaveLength(0);
 	});
 
 	it("marks the user blocked on 403 and skips them afterwards", async () => {
-		const blocked = new GrammyError("blocked", { ok: false, error_code: 403, description: "Forbidden: bot was blocked by the user" }, "sendMessage", {});
-		await runTracker({ db: env.DB, api: fakeApi([], () => blocked), provider: provider({ [AWB]: inTransit }) });
+		await baseline();
+		const provider = fakeProvider({ [AWB]: found([inTransit, pickedUp]) });
+		await runTracker({
+			db: env.DB,
+			api: fakeApi([], () => ({ error_code: 403, description: "Forbidden: bot was blocked by the user" })),
+			provider,
+		});
 
 		const user = await env.DB.prepare("SELECT is_blocked FROM users WHERE chat_id = ?").bind(CHAT).first();
 		expect(user).toEqual({ is_blocked: 1 });
-		const next = await runTracker({ db: env.DB, api: fakeApi([]), provider: provider({ [AWB]: delivered }) });
+		const next = await runTracker({ db: env.DB, api: fakeApi([]), provider });
 		expect(next.checked).toBe(0);
 	});
 
-	it("retries a failed notification on the next run", async () => {
-		const serverError = new GrammyError("oops", { ok: false, error_code: 500, description: "Internal Server Error" }, "sendMessage", {});
-		const failed = await runTracker({ db: env.DB, api: fakeApi([], () => serverError), provider: provider({ [AWB]: inTransit }) });
+	it("retries a failed notification on the next run, exactly once", async () => {
+		await baseline();
+		const provider = fakeProvider({ [AWB]: found([inTransit, pickedUp]) });
+		const failed = await runTracker({
+			db: env.DB,
+			api: fakeApi([], () => ({ error_code: 500, description: "Internal Server Error" })),
+			provider,
+		});
 		expect(failed).toMatchObject({ changed: 1, notified: 0 });
 
 		const sent: Sent[] = [];
-		const retry = await runTracker({ db: env.DB, api: fakeApi(sent), provider: provider({ [AWB]: inTransit }) });
+		const retry = await runTracker({ db: env.DB, api: fakeApi(sent), provider });
 		expect(retry).toMatchObject({ retried: 1, changed: 0 });
 		expect(sent).toHaveLength(1);
-		const event = await env.DB.prepare("SELECT notified FROM status_events").first();
-		expect(event).toEqual({ notified: 1 });
+		expect(sent[0].text).toContain("In Transit");
+
+		await runTracker({ db: env.DB, api: fakeApi(sent), provider });
+		expect(sent).toHaveLength(1);
 	});
 
-	it("keeps going when one shipment's lookup throws", async () => {
+	it("keeps going when one lookup throws", async () => {
 		await addShipment(env.DB, CHAT, "98765432109", null);
 		const sent: Sent[] = [];
 		const summary = await runTracker({
 			db: env.DB,
 			api: fakeApi(sent),
-			provider: provider({ [AWB]: new Error("boom"), "98765432109": inTransit }),
+			provider: fakeProvider({ [AWB]: new Error("BlueDart down"), "98765432109": found([pickedUp]) }),
 		});
 
 		expect(summary).toMatchObject({ checked: 2, failed: 1, notified: 1 });
-		expect((await shipment())?.last_checked_at).not.toBeNull();
+		expect((await shipment()).lastCheckedAt).not.toBeNull();
 	});
 
 	it("checks never-checked and least-recently-checked shipments first", async () => {
 		await addShipment(env.DB, CHAT, "98765432109", null);
 		await env.DB.prepare("UPDATE shipments SET last_checked_at = datetime('now') WHERE awb = ?").bind(AWB).run();
 
-		const seen: string[] = [];
-		await runTracker({
-			db: env.DB,
-			api: fakeApi([]),
-			maxShipments: 1,
-			provider: { fetchStatus: async (awb) => (seen.push(awb), null) },
-		});
-		expect(seen).toEqual(["98765432109"]);
+		const provider = fakeProvider({});
+		await runTracker({ db: env.DB, api: fakeApi([]), provider, maxShipments: 1 });
+		expect(provider.calls).toEqual(["98765432109"]);
 	});
 });

@@ -1,17 +1,10 @@
 import { GrammyError, type Api } from "grammy";
 import type { Shipment } from "../db/shipments";
-import {
-	getPendingNotifications,
-	getShipmentsToCheck,
-	markChecked,
-	markEventNotified,
-	markUserBlocked,
-	recordStatusChange,
-} from "../db/tracking";
-import { escapeHtml } from "../utils/format";
+import { clearPendingMessage, getPendingMessages, getShipmentsToCheck, markChecked, markUserBlocked } from "../db/tracking";
+import { applyTrackingResult } from "./apply";
 import type { TrackingProvider } from "./provider";
 
-// Each shipment costs ~1 carrier fetch + up to 1 Telegram call. The Workers Free plan
+// Each shipment costs ~1 BlueDart fetch + up to 1 Telegram call. The Workers Free plan
 // allows 50 subrequests per invocation, so stay well below it; oldest-checked-first
 // ordering means everyone is still covered across runs.
 export const MAX_SHIPMENTS_PER_RUN = 20;
@@ -28,29 +21,11 @@ export interface TrackerDeps {
 
 export interface TrackerSummary {
 	checked: number;
-	noStatus: number;
+	notFound: number;
 	changed: number;
 	notified: number;
 	retried: number;
 	failed: number;
-}
-
-export interface Notification {
-	awb: string;
-	label: string | null;
-	statusText: string | null;
-	location: string | null;
-	eventAt: string | null;
-	isTerminal: boolean;
-}
-
-export function formatNotification(n: Notification): string {
-	const title = n.label ? `<b>${escapeHtml(n.label)}</b> · <code>${n.awb}</code>` : `<code>${n.awb}</code>`;
-	const lines = [`📦 ${title}`, `Status: <b>${escapeHtml(n.statusText ?? "Unknown")}</b>`];
-	if (n.location) lines.push(`Location: ${escapeHtml(n.location)}`);
-	if (n.eventAt) lines.push(`Updated: ${escapeHtml(n.eventAt)}`);
-	if (n.isTerminal) lines.push("", "This shipment is complete, so I've stopped tracking it.");
-	return lines.join("\n");
 }
 
 type SendResult = "sent" | "blocked" | "failed";
@@ -81,34 +56,16 @@ async function sendNotification(deps: TrackerDeps, chatId: number, text: string)
 async function processShipment(deps: TrackerDeps, shipment: Shipment, summary: TrackerSummary): Promise<void> {
 	summary.checked++;
 	const result = await deps.provider.fetchStatus(shipment.awb);
+	const applied = await applyTrackingResult(deps.db, shipment, result, { notify: true });
 
-	if (!result) {
-		summary.noStatus++;
-		await markChecked(deps.db, shipment.id);
-		return;
-	}
+	if (!applied.found) summary.notFound++;
+	if (!applied.changed || !applied.message) return;
 
-	if (result.status === shipment.lastStatus) {
-		await markChecked(deps.db, shipment.id);
-		return;
-	}
-
-	// Record first, then notify: if sending fails, the event stays notified = 0 and is retried next run.
 	summary.changed++;
-	console.log(`[tracker] ${shipment.awb}: ${shipment.lastStatus ?? "∅"} → ${result.status}`);
-	const eventId = await recordStatusChange(deps.db, shipment.id, result);
-
-	const text = formatNotification({
-		awb: shipment.awb,
-		label: shipment.label,
-		statusText: result.statusText,
-		location: result.location ?? null,
-		eventAt: result.eventAt ?? null,
-		isTerminal: result.isTerminal,
-	});
-	const sent = await sendNotification(deps, shipment.chatId, text);
-	if (sent === "sent") {
-		await markEventNotified(deps.db, eventId);
+	console.log(`[tracker] ${shipment.awb}: ${applied.newScans.length} new scan(s)${applied.isTerminal ? ", complete" : ""}`);
+	// The message is already stored as pending_message, so a failed send is retried next run.
+	if ((await sendNotification(deps, shipment.chatId, applied.message)) === "sent") {
+		await clearPendingMessage(deps.db, shipment.id);
 		summary.notified++;
 	}
 }
@@ -124,13 +81,13 @@ async function forEachLimited<T>(items: T[], limit: number, fn: (item: T) => Pro
 	await Promise.all(workers);
 }
 
-/** One cron run: retry failed notifications, then check shipments and notify on status changes. */
+/** One cron run: retry failed notifications, then check shipments and notify on changes. */
 export async function runTracker(deps: TrackerDeps): Promise<TrackerSummary> {
-	const summary: TrackerSummary = { checked: 0, noStatus: 0, changed: 0, notified: 0, retried: 0, failed: 0 };
+	const summary: TrackerSummary = { checked: 0, notFound: 0, changed: 0, notified: 0, retried: 0, failed: 0 };
 
-	for (const pending of await getPendingNotifications(deps.db, MAX_RETRIES_PER_RUN)) {
-		if ((await sendNotification(deps, pending.chatId, formatNotification(pending))) === "sent") {
-			await markEventNotified(deps.db, pending.eventId);
+	for (const pending of await getPendingMessages(deps.db, MAX_RETRIES_PER_RUN)) {
+		if ((await sendNotification(deps, pending.chatId, pending.message)) === "sent") {
+			await clearPendingMessage(deps.db, pending.shipmentId);
 			summary.retried++;
 		}
 	}
@@ -142,7 +99,7 @@ export async function runTracker(deps: TrackerDeps): Promise<TrackerSummary> {
 		try {
 			await processShipment(deps, shipment, summary);
 		} catch (err) {
-			// One bad AWB must never stop the run.
+			// One bad AWB (or a BlueDart hiccup) must never stop the run.
 			summary.failed++;
 			console.error(`[tracker] error checking ${shipment.awb}:`, err);
 			// Still rotate it to the back of the queue so failures can't starve other shipments.

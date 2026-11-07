@@ -1,16 +1,26 @@
-export interface TrackingResult {
-	/** Normalized status key used for change detection, e.g. "IN_TRANSIT". */
-	status: string;
-	/** Carrier's human-readable status, shown to the user. */
-	statusText: string;
-	location?: string;
-	/** ISO timestamp of the latest scan, if the carrier provides one. */
-	eventAt?: string;
-	/** Delivered / returned: stop tracking after this. */
-	isTerminal: boolean;
+/** One row of the carrier's "Status and Scans" history. */
+export interface Scan {
+	location: string;
+	details: string;
+	/** As shown by the carrier, e.g. "07 Mar 2026". */
+	date: string;
+	/** As shown by the carrier, e.g. "10:15". */
+	time: string;
 }
 
+export type TrackingResult =
+	/** The carrier has no record of this AWB (yet). */
+	| { found: false }
+	| {
+			found: true;
+			/** Newest first. */
+			scans: Scan[];
+			expectedDeliveryDate: string | null;
+			/** Delivered / returned to shipper: stop tracking after this. */
+			isTerminal: boolean;
+	  };
+
 export interface TrackingProvider {
-	/** Returns null when no status is available (yet), so nothing gets compared. */
-	fetchStatus(awb: string): Promise<TrackingResult | null>;
+	/** Throws on network errors or an unrecognised page; callers treat that as "try again later". */
+	fetchStatus(awb: string): Promise<TrackingResult>;
 }

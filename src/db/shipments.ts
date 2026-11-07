@@ -17,6 +17,7 @@ export interface Shipment {
 	lastLocation: string | null;
 	lastEventAt: string | null;
 	lastCheckedAt: string | null;
+	expectedDeliveryDate: string | null;
 	isActive: boolean;
 }
 
@@ -30,11 +31,12 @@ export interface ShipmentRow {
 	last_location: string | null;
 	last_event_at: string | null;
 	last_checked_at: string | null;
+	expected_delivery_date: string | null;
 	is_active: number;
 }
 
 export const SHIPMENT_COLUMNS =
-	"id, chat_id, awb, label, last_status, last_status_text, last_location, last_event_at, last_checked_at, is_active";
+	"id, chat_id, awb, label, last_status, last_status_text, last_location, last_event_at, last_checked_at, expected_delivery_date, is_active";
 
 export function toShipment(row: ShipmentRow): Shipment {
 	return {
@@ -47,6 +49,7 @@ export function toShipment(row: ShipmentRow): Shipment {
 		lastLocation: row.last_location,
 		lastEventAt: row.last_event_at,
 		lastCheckedAt: row.last_checked_at,
+		expectedDeliveryDate: row.expected_delivery_date,
 		isActive: row.is_active === 1,
 	};
 }
@@ -102,6 +105,14 @@ export async function addShipment(
 		.bind(chatId, awb, label)
 		.run();
 	return existing.is_active === 1 ? "exists" : "reactivated";
+}
+
+export async function getShipment(db: D1Database, chatId: number, awb: string): Promise<Shipment | null> {
+	const row = await db
+		.prepare(`SELECT ${SHIPMENT_COLUMNS} FROM shipments WHERE chat_id = ?1 AND awb = ?2`)
+		.bind(chatId, awb)
+		.first<ShipmentRow>();
+	return row ? toShipment(row) : null;
 }
 
 /** Active shipments for one chat, newest first. */

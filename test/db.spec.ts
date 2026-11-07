@@ -10,7 +10,7 @@ import {
 const CHAT = 1001;
 
 beforeEach(async () => {
-	await env.DB.batch([env.DB.prepare("DELETE FROM shipments"), env.DB.prepare("DELETE FROM users")]);
+	await env.DB.batch([env.DB.prepare("DELETE FROM scans"), env.DB.prepare("DELETE FROM shipments"), env.DB.prepare("DELETE FROM users")]);
 	await upsertUser(env.DB, { chatId: CHAT, username: "alice", firstName: "Alice" });
 });
 
