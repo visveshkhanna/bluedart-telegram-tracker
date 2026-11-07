@@ -17,6 +17,7 @@
 		"wrangler": "^4"
 	},
 	"dependencies": {
-		"grammy": "^1.46.0"
+		"grammy": "^1.46.0",
+		"node-html-parser": "9.0.5"
 	}
 }
