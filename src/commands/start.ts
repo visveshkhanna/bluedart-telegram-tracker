@@ -3,9 +3,10 @@ import { escapeHtml } from "../utils/format";
 
 export const HELP_TEXT = [
 	"<b>Commands</b>",
-	"/track &lt;AWB&gt; [label] – start tracking a BlueDart shipment",
+	"/track &lt;AWB&gt; [name] – start tracking a BlueDart shipment",
+	"/list – your shipments; tap one to refresh, rename, change how often it's checked, or stop",
 	"/status &lt;AWB&gt; – latest scans and expected delivery date",
-	"/list – show your tracked shipments",
+	"/rename &lt;AWB&gt; &lt;name&gt; – rename a shipment",
 	"/untrack &lt;AWB&gt; – stop tracking a shipment",
 	"/help – show this message",
 ].join("\n");

@@ -1,4 +1,5 @@
 import { Bot } from "grammy";
+import { registerManage } from "./commands/manage";
 import { registerStart } from "./commands/start";
 import { registerTracking } from "./commands/tracking";
 import { upsertUser } from "./db/shipments";
@@ -26,6 +27,7 @@ export function createBot(env: Env, provider: TrackingProvider = bluedartProvide
 
 	registerStart(bot);
 	registerTracking(bot, env.DB, provider);
+	registerManage(bot, env.DB, provider);
 
 	bot.on("message", async (ctx) => {
 		await ctx.reply("I don't know that one. Try /help.");
