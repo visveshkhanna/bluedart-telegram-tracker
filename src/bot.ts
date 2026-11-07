@@ -2,12 +2,14 @@ import { Bot } from "grammy";
 import { registerStart } from "./commands/start";
 import { registerTracking } from "./commands/tracking";
 import { upsertUser } from "./db/shipments";
+import { bluedartProvider } from "./tracker/bluedart";
+import type { TrackingProvider } from "./tracker/provider";
 
 /**
  * Builds a bot for one request. `env` only exists inside the Worker handlers,
  * so this is called per request; passing botInfo avoids a getMe call each time.
  */
-export function createBot(env: Env): Bot {
+export function createBot(env: Env, provider: TrackingProvider = bluedartProvider): Bot {
 	const bot = new Bot(env.BOT_TOKEN, { botInfo: JSON.parse(env.BOT_INFO) });
 
 	// Remember everyone who messages the bot (and un-block them if they come back).
@@ -23,7 +25,7 @@ export function createBot(env: Env): Bot {
 	});
 
 	registerStart(bot);
-	registerTracking(bot, env.DB);
+	registerTracking(bot, env.DB, provider);
 
 	bot.on("message", async (ctx) => {
 		await ctx.reply("I don't know that one. Try /help.");

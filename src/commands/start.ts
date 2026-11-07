@@ -4,6 +4,7 @@ import { escapeHtml } from "../utils/format";
 export const HELP_TEXT = [
 	"<b>Commands</b>",
 	"/track &lt;AWB&gt; [label] – start tracking a BlueDart shipment",
+	"/status &lt;AWB&gt; – latest scans and expected delivery date",
 	"/list – show your tracked shipments",
 	"/untrack &lt;AWB&gt; – stop tracking a shipment",
 	"/help – show this message",

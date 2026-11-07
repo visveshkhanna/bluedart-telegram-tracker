@@ -2,6 +2,8 @@ import { env } from "cloudflare:test";
 import type { Update } from "grammy/types";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createBot } from "../src/bot";
+import type { TrackingProvider } from "../src/tracker/provider";
+import { delivered, fakeProvider, found, inTransit, pickedUp, resetDb } from "./helpers";
 
 const CHAT = 4242;
 let updateId = 1;
@@ -22,11 +24,12 @@ function textUpdate(text: string): Update {
 }
 
 /** Sends one message through the bot and returns the text it replied with. */
-async function send(text: string): Promise<string[]> {
-	const bot = createBot(env);
+async function send(text: string, provider: TrackingProvider = fakeProvider({})): Promise<string[]> {
+	const bot = createBot(env, provider);
 	const replies: string[] = [];
 	bot.api.config.use(async (_prev, method, payload) => {
 		if (method === "sendMessage") replies.push((payload as { text: string }).text);
+		if (method === "sendChatAction") return { ok: true, result: true } as never;
 		return { ok: true, result: true } as never;
 	});
 	await bot.handleUpdate(textUpdate(text));
@@ -34,7 +37,7 @@ async function send(text: string): Promise<string[]> {
 }
 
 beforeEach(async () => {
-	await env.DB.batch([env.DB.prepare("DELETE FROM shipments"), env.DB.prepare("DELETE FROM users")]);
+	await resetDb(env.DB);
 });
 
 describe("bot commands", () => {
@@ -50,17 +53,52 @@ describe("bot commands", () => {
 		expect((await send("/track abc"))[0]).toContain("doesn't look like");
 	});
 
-	it("/track → /list → /untrack round trip", async () => {
-		expect((await send("/track 123-4567-8901 New <shoes>"))[0]).toContain("Tracking <code>12345678901</code>");
+	it("/track → /list → /untrack round trip (AWB not in BlueDart yet)", async () => {
+		expect((await send("/track 123-4567-8901 New <shoes>"))[0]).toContain("no record of it yet");
 		expect((await send("/track 12345678901"))[0]).toContain("Already tracking");
 
 		const [list] = await send("/list");
 		expect(list).toContain("New &lt;shoes&gt;");
-		expect(list).toContain("waiting for first check");
+		expect(list).toContain("waiting for first scan");
 
 		expect((await send("/untrack 12345678901"))[0]).toContain("Stopped tracking");
 		expect((await send("/untrack 12345678901"))[0]).toContain("weren't tracking");
 		expect((await send("/list"))[0]).toContain("not tracking anything");
+	});
+
+	it("/track shows the current status and expected delivery date right away", async () => {
+		const provider = fakeProvider({ "12345678901": found([inTransit, pickedUp], "12 Mar 2026") });
+		const [reply] = await send("/track 12345678901 Shoes", provider);
+
+		expect(reply).toContain("Tracking started");
+		expect(reply).toContain("<b>In Transit</b>");
+		expect(reply).toContain("Expected delivery: <b>12 Mar 2026</b>");
+		expect(reply).toContain("Shipment Picked Up");
+
+		const [list] = await send("/list");
+		expect(list).toContain("In Transit (Mumbai Hub)");
+		expect(list).toContain("12 Mar 2026");
+	});
+
+	it("/track says so when BlueDart is unreachable", async () => {
+		const provider = fakeProvider({ "12345678901": new Error("timeout") });
+		expect((await send("/track 12345678901", provider))[0]).toContain("couldn't reach BlueDart");
+	});
+
+	it("/track on an already delivered shipment doesn't keep tracking it", async () => {
+		const provider = fakeProvider({ "12345678901": found([delivered, pickedUp], null, true) });
+		expect((await send("/track 12345678901", provider))[0]).toContain("already complete");
+		expect((await send("/list"))[0]).toContain("not tracking anything");
+	});
+
+	it("/status refreshes live and shows recent scans", async () => {
+		await send("/track 12345678901", fakeProvider({ "12345678901": found([pickedUp], "12 Mar 2026") }));
+		const [reply] = await send("/status 12345678901", fakeProvider({ "12345678901": found([inTransit, pickedUp], "13 Mar 2026") }));
+
+		expect(reply).toContain("<b>In Transit</b>");
+		expect(reply).toContain("13 Mar 2026");
+		expect(reply).toContain("Earlier scans");
+		expect((await send("/status 99999999999"))[0]).toContain("not tracking");
 	});
 
 	it("replies to unknown messages", async () => {
