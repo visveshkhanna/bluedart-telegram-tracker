@@ -6,4 +6,12 @@
 	"observability": {
 		"enabled": true,
 	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "bluedart-tracker",
+			"database_id": "f0bef9b9-ab1a-4c0f-a219-52299e8e41e2",
+			"migrations_dir": "migrations",
+		},
+	],
 }
