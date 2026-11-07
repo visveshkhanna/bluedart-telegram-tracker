@@ -1,5 +1,5 @@
 import { Api, webhookCallback } from "grammy";
-import { createBot } from "./bot";
+import { createBot, ensureBotInfo } from "./bot";
 import { bluedartProvider } from "./tracker/bluedart";
 import { runTracker } from "./tracker/run";
 
@@ -11,8 +11,13 @@ export default {
 			if (request.method !== "POST") {
 				return new Response("Method Not Allowed", { status: 405 });
 			}
-			// grammY rejects requests whose X-Telegram-Bot-Api-Secret-Token doesn't match.
-			return webhookCallback(createBot(env), "cloudflare-mod", { secretToken: env.WEBHOOK_SECRET })(request);
+			// Reject unauthenticated calls before doing any work (grammY checks this again).
+			if (request.headers.get("X-Telegram-Bot-Api-Secret-Token") !== env.WEBHOOK_SECRET) {
+				return new Response("Unauthorized", { status: 401 });
+			}
+			const bot = createBot(env);
+			await ensureBotInfo(bot);
+			return webhookCallback(bot, "cloudflare-mod", { secretToken: env.WEBHOOK_SECRET })(request);
 		}
 
 		return new Response("ok");
