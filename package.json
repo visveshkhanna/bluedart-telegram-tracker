@@ -30,5 +30,18 @@
 	"dependencies": {
 		"grammy": "^1.46.0",
 		"node-html-parser": "9.0.5"
+	},
+	"cloudflare": {
+		"bindings": {
+			"BOT_TOKEN": {
+				"description": "Your bot's token from [@BotFather](https://t.me/BotFather) (send `/newbot`)."
+			},
+			"WEBHOOK_SECRET": {
+				"description": "Any long random string (e.g. `openssl rand -hex 32`). Telegram sends it with every update so the Worker can verify requests. You'll also use it once to open `/setup?secret=…`."
+			},
+			"DB": {
+				"description": "D1 database that stores users, shipments and scan history."
+			}
+		}
 	}
 }
