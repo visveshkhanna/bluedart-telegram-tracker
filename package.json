@@ -7,7 +7,8 @@
 		"dev": "wrangler dev",
 		"start": "wrangler dev",
 		"test": "vitest",
-		"cf-typegen": "wrangler types"
+		"cf-typegen": "wrangler types",
+		"webhook": "node scripts/webhook.mjs"
 	},
 	"devDependencies": {
 		"@cloudflare/vitest-plugin": "^1.4.3",
