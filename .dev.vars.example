@@ -1,4 +1,5 @@
-# Copy to .dev.vars (gitignored) and fill in. Use a separate DEV bot token here.
+# Copy to .dev.vars (local dev) or .prod.vars (production); both are gitignored.
+# Use a separate bot for each, since a bot can only have one webhook.
 BOT_TOKEN="123456:ABC-your-botfather-token"
 # Random string; generate with: openssl rand -hex 32
 WEBHOOK_SECRET="replace-me"
