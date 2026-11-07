@@ -6,6 +6,10 @@
 	"observability": {
 		"enabled": true,
 	},
+	// One schedule: check every active shipment and notify on status changes.
+	"triggers": {
+		"crons": ["*/30 * * * *"],
+	},
 	"d1_databases": [
 		{
 			"binding": "DB",
