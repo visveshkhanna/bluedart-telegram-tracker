@@ -15,13 +15,16 @@
 		"db:migrate:local": "wrangler d1 migrations apply bluedart-tracker --local",
 		"db:migrate:remote": "wrangler d1 migrations apply bluedart-tracker --remote",
 		"secrets:prod": "wrangler secret bulk .prod.vars",
-		"webhook:prod": "node --env-file=.prod.vars scripts/webhook.mjs"
+		"webhook:prod": "node --env-file=.prod.vars scripts/webhook.mjs",
+		"format": "prettier --write .",
+		"format:check": "prettier --check ."
 	},
 	"devDependencies": {
 		"@cloudflare/vitest-plugin": "^1.4.3",
 		"typescript": "^5.5.2",
 		"vitest": "~5.0.3",
-		"wrangler": "^4"
+		"wrangler": "^4",
+		"prettier": "3.9.10"
 	},
 	"dependencies": {
 		"grammy": "^1.46.0",
