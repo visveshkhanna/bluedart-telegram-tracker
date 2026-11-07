@@ -175,6 +175,11 @@ npx wrangler d1 migrations list bluedart-tracker --remote  # applied / pending m
 npm run webhook:prod -- delete                             # detach the production bot
 ```
 
+## Troubleshooting
+
+- **`npm run webhook` fails with `fetch failed … ECONNRESET`.** Some local network filters (for example antivirus web filters) reset Node's connections to `api.telegram.org` while still letting `curl` through. The script retries and then falls back to `curl` automatically. The deployed bot isn't affected, because it talks to Telegram from Cloudflare.
+- **The bot doesn't answer.** Run `npm run webhook:prod -- info` and check `last_error_message`. A `401` means the webhook secret doesn't match `WEBHOOK_SECRET`; a `5xx` usually shows up in `npx wrangler tail`, for example `no such table` if `npm run db:migrate:remote` was skipped.
+
 ## Limits and caveats
 
 - **Subrequests:** each check costs about one BlueDart request plus up to one Telegram request. The Free plan allows 50 subrequests per invocation, so a tick checks at most 20 shipments; the rest are picked up on later ticks.
