@@ -18,6 +18,8 @@ export interface Shipment {
 	lastEventAt: string | null;
 	lastCheckedAt: string | null;
 	expectedDeliveryDate: string | null;
+	checkIntervalMinutes: number;
+	nextCheckAt: string | null;
 	isActive: boolean;
 }
 
@@ -32,11 +34,13 @@ export interface ShipmentRow {
 	last_event_at: string | null;
 	last_checked_at: string | null;
 	expected_delivery_date: string | null;
+	check_interval_minutes: number;
+	next_check_at: string | null;
 	is_active: number;
 }
 
 export const SHIPMENT_COLUMNS =
-	"id, chat_id, awb, label, last_status, last_status_text, last_location, last_event_at, last_checked_at, expected_delivery_date, is_active";
+	"id, chat_id, awb, label, last_status, last_status_text, last_location, last_event_at, last_checked_at, expected_delivery_date, check_interval_minutes, next_check_at, is_active";
 
 export function toShipment(row: ShipmentRow): Shipment {
 	return {
@@ -50,6 +54,8 @@ export function toShipment(row: ShipmentRow): Shipment {
 		lastEventAt: row.last_event_at,
 		lastCheckedAt: row.last_checked_at,
 		expectedDeliveryDate: row.expected_delivery_date,
+		checkIntervalMinutes: row.check_interval_minutes,
+		nextCheckAt: row.next_check_at,
 		isActive: row.is_active === 1,
 	};
 }
@@ -115,6 +121,15 @@ export async function getShipment(db: D1Database, chatId: number, awb: string): 
 	return row ? toShipment(row) : null;
 }
 
+/** Looks a shipment up by id, but only within the given chat (callback data comes from the client). */
+export async function getShipmentById(db: D1Database, chatId: number, id: number): Promise<Shipment | null> {
+	const row = await db
+		.prepare(`SELECT ${SHIPMENT_COLUMNS} FROM shipments WHERE id = ?1 AND chat_id = ?2`)
+		.bind(id, chatId)
+		.first<ShipmentRow>();
+	return row ? toShipment(row) : null;
+}
+
 /** Active shipments for one chat, newest first. */
 export async function listActiveShipments(db: D1Database, chatId: number): Promise<Shipment[]> {
 	const { results } = await db
@@ -136,6 +151,45 @@ export async function deactivateShipment(db: D1Database, chatId: number, awb: st
 			 WHERE chat_id = ?1 AND awb = ?2 AND is_active = 1`,
 		)
 		.bind(chatId, awb)
+		.run();
+	return result.meta.changes > 0;
+}
+
+/** Stop tracking by id. Returns false if it wasn't an active shipment of this chat. */
+export async function deactivateShipmentById(db: D1Database, chatId: number, id: number): Promise<boolean> {
+	const result = await db
+		.prepare(
+			`UPDATE shipments SET is_active = 0, updated_at = datetime('now')
+			 WHERE id = ?1 AND chat_id = ?2 AND is_active = 1`,
+		)
+		.bind(id, chatId)
+		.run();
+	return result.meta.changes > 0;
+}
+
+/** Sets a shipment's label; null clears it. Returns false if the shipment isn't this chat's. */
+export async function renameShipment(db: D1Database, chatId: number, id: number, label: string | null): Promise<boolean> {
+	const result = await db
+		.prepare("UPDATE shipments SET label = ?3, updated_at = datetime('now') WHERE id = ?1 AND chat_id = ?2")
+		.bind(id, chatId, label)
+		.run();
+	return result.meta.changes > 0;
+}
+
+/**
+ * Changes how often a shipment is checked. The next check is rescheduled from the last
+ * check (or now), so switching from "daily" to "15 min" takes effect right away.
+ */
+export async function setCheckInterval(db: D1Database, chatId: number, id: number, minutes: number): Promise<boolean> {
+	const result = await db
+		.prepare(
+			`UPDATE shipments SET
+			   check_interval_minutes = ?3,
+			   next_check_at = datetime(COALESCE(last_checked_at, datetime('now')), '+' || ?3 || ' minutes'),
+			   updated_at = datetime('now')
+			 WHERE id = ?1 AND chat_id = ?2`,
+		)
+		.bind(id, chatId, minutes)
 		.run();
 	return result.meta.changes > 0;
 }

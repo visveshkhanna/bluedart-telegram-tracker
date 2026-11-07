@@ -9,7 +9,14 @@ export function scanKey(scan: Scan): string {
 		.join("|");
 }
 
-/** Active shipments of non-blocked users, least recently checked first (never-checked first of all). */
+// The cron ticks every 5 minutes but not exactly on the minute, so a shipment due within
+// the next 2 minutes counts as due now; otherwise an hourly check could slip to 65 minutes.
+const DUE_TOLERANCE = "+2 minutes";
+
+/** SQL that schedules the next check one interval from now. */
+const NEXT_CHECK = "datetime('now', '+' || check_interval_minutes || ' minutes')";
+
+/** Due active shipments of non-blocked users, most overdue (or never checked) first. */
 export async function getShipmentsToCheck(db: D1Database, limit: number): Promise<Shipment[]> {
 	const columns = SHIPMENT_COLUMNS.split(", ").map((c) => `s.${c}`).join(", ");
 	const { results } = await db
@@ -17,7 +24,8 @@ export async function getShipmentsToCheck(db: D1Database, limit: number): Promis
 			`SELECT ${columns} FROM shipments s
 			 JOIN users u ON u.chat_id = s.chat_id
 			 WHERE s.is_active = 1 AND u.is_blocked = 0
-			 ORDER BY s.last_checked_at ASC NULLS FIRST, s.id ASC
+			   AND (s.next_check_at IS NULL OR s.next_check_at <= datetime('now', '${DUE_TOLERANCE}'))
+			 ORDER BY s.next_check_at ASC NULLS FIRST, s.id ASC
 			 LIMIT ?1`,
 		)
 		.bind(limit)
@@ -27,7 +35,7 @@ export async function getShipmentsToCheck(db: D1Database, limit: number): Promis
 
 export async function markChecked(db: D1Database, shipmentId: number): Promise<void> {
 	await db
-		.prepare("UPDATE shipments SET last_checked_at = datetime('now') WHERE id = ?1")
+		.prepare(`UPDATE shipments SET last_checked_at = datetime('now'), next_check_at = ${NEXT_CHECK} WHERE id = ?1`)
 		.bind(shipmentId)
 		.run();
 }
@@ -86,6 +94,7 @@ export async function saveTrackingUpdate(db: D1Database, shipmentId: number, upd
 				   is_active = ?7,
 				   pending_message = COALESCE(?8, pending_message),
 				   last_checked_at = datetime('now'),
+				   next_check_at = ${NEXT_CHECK},
 				   updated_at = datetime('now')
 				 WHERE id = ?1`,
 			)

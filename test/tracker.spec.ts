@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
-import { addShipment, getShipment, listActiveShipments, upsertUser } from "../src/db/shipments";
+import { addShipment, getShipment, listActiveShipments, setCheckInterval, upsertUser } from "../src/db/shipments";
 import { getRecentScans } from "../src/db/tracking";
 import { applyTrackingResult } from "../src/tracker/apply";
 import { runTracker } from "../src/tracker/run";
@@ -23,9 +23,15 @@ async function shipment() {
 	return (await getShipment(env.DB, CHAT, AWB))!;
 }
 
-/** Stores a baseline like /track does (no notification). */
+/** Pretends every shipment's next check time has arrived. */
+async function makeDue() {
+	await env.DB.prepare("UPDATE shipments SET next_check_at = datetime('now', '-1 minute')").run();
+}
+
+/** Stores a baseline like /track does (no notification), then makes the shipment due again. */
 async function baseline(result = found([pickedUp], "12 Mar 2026")) {
 	await applyTrackingResult(env.DB, await shipment(), result, { notify: false });
+	await makeDue();
 }
 
 beforeEach(async () => {
@@ -124,6 +130,7 @@ describe("runTracker", () => {
 
 		const user = await env.DB.prepare("SELECT is_blocked FROM users WHERE chat_id = ?").bind(CHAT).first();
 		expect(user).toEqual({ is_blocked: 1 });
+		await makeDue();
 		const next = await runTracker({ db: env.DB, api: fakeApi([]), provider });
 		expect(next.checked).toBe(0);
 	});
@@ -139,11 +146,13 @@ describe("runTracker", () => {
 		expect(failed).toMatchObject({ changed: 1, notified: 0 });
 
 		const sent: Sent[] = [];
+		await makeDue();
 		const retry = await runTracker({ db: env.DB, api: fakeApi(sent), provider });
 		expect(retry).toMatchObject({ retried: 1, changed: 0 });
 		expect(sent).toHaveLength(1);
 		expect(sent[0].text).toContain("In Transit");
 
+		await makeDue();
 		await runTracker({ db: env.DB, api: fakeApi(sent), provider });
 		expect(sent).toHaveLength(1);
 	});
@@ -161,12 +170,45 @@ describe("runTracker", () => {
 		expect((await shipment()).lastCheckedAt).not.toBeNull();
 	});
 
-	it("checks never-checked and least-recently-checked shipments first", async () => {
+	it("checks never-checked and most overdue shipments first", async () => {
 		await addShipment(env.DB, CHAT, "98765432109", null);
-		await env.DB.prepare("UPDATE shipments SET last_checked_at = datetime('now') WHERE awb = ?").bind(AWB).run();
+		await env.DB.prepare("UPDATE shipments SET next_check_at = datetime('now', '-1 minute') WHERE awb = ?").bind(AWB).run();
 
 		const provider = fakeProvider({});
 		await runTracker({ db: env.DB, api: fakeApi([]), provider, maxShipments: 1 });
 		expect(provider.calls).toEqual(["98765432109"]);
+	});
+});
+
+describe("per-shipment check interval", () => {
+	it("defaults to hourly and isn't checked again until due", async () => {
+		const provider = fakeProvider({});
+		await runTracker({ db: env.DB, api: fakeApi([]), provider });
+		await runTracker({ db: env.DB, api: fakeApi([]), provider });
+		expect(provider.calls).toEqual([AWB]);
+
+		const row = await env.DB.prepare(
+			"SELECT check_interval_minutes, (julianday(next_check_at) - julianday(last_checked_at)) * 1440 AS gap FROM shipments",
+		).first<{ check_interval_minutes: number; gap: number }>();
+		expect(row?.check_interval_minutes).toBe(60);
+		expect(Math.round(row!.gap)).toBe(60);
+	});
+
+	it("treats a check due within the next 2 minutes as due now (cron jitter)", async () => {
+		await env.DB.prepare("UPDATE shipments SET next_check_at = datetime('now', '+90 seconds')").run();
+		const provider = fakeProvider({});
+		await runTracker({ db: env.DB, api: fakeApi([]), provider });
+		expect(provider.calls).toEqual([AWB]);
+	});
+
+	it("reschedules from the last check when the interval changes", async () => {
+		const { id } = await shipment();
+		await env.DB.prepare("UPDATE shipments SET last_checked_at = datetime('now', '-20 minutes'), next_check_at = datetime('now', '+1 day')").run();
+
+		await setCheckInterval(env.DB, CHAT, id, 15);
+		const provider = fakeProvider({});
+		await runTracker({ db: env.DB, api: fakeApi([]), provider });
+		expect(provider.calls).toEqual([AWB]);
+		expect((await shipment()).checkIntervalMinutes).toBe(15);
 	});
 });

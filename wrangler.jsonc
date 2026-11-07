@@ -6,9 +6,10 @@
 	"observability": {
 		"enabled": true,
 	},
-	// One schedule: check every active shipment and notify on status changes.
+	// Ticks every 5 minutes; each shipment is only checked when its own interval
+	// (default 1 hour, changeable from the bot) says it's due.
 	"triggers": {
-		"crons": ["0 * * * *"],
+		"crons": ["*/5 * * * *"],
 	},
 	"d1_databases": [
 		{
