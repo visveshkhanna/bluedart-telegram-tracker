@@ -3,21 +3,22 @@
 	"version": "0.0.0",
 	"private": true,
 	"scripts": {
-		"deploy": "wrangler deploy",
+		"deploy": "npm run db:migrate:remote && wrangler deploy",
 		"dev": "wrangler dev --test-scheduled",
 		"start": "wrangler dev --test-scheduled",
 		"test": "vitest run",
-		"cf-typegen": "wrangler types",
+		"cf-typegen": "wrangler types --env-file .dev.vars.example",
 		"webhook": "node scripts/webhook.mjs",
 		"test:watch": "vitest",
 		"typecheck": "tsc --noEmit && tsc --noEmit -p test",
-		"check": "npm run typecheck && npm test && wrangler deploy --dry-run",
-		"db:migrate:local": "wrangler d1 migrations apply bluedart-tracker --local",
-		"db:migrate:remote": "wrangler d1 migrations apply bluedart-tracker --remote",
+		"check": "npm run format:check && npm run typecheck && npm test && wrangler deploy --dry-run",
+		"db:migrate:local": "wrangler d1 migrations apply DB --local",
+		"db:migrate:remote": "wrangler d1 migrations apply DB --remote",
 		"secrets:prod": "wrangler secret bulk .prod.vars",
 		"webhook:prod": "node --env-file=.prod.vars scripts/webhook.mjs",
 		"format": "prettier --write .",
-		"format:check": "prettier --check ."
+		"format:check": "prettier --check .",
+		"postinstall": "npm run cf-typegen"
 	},
 	"devDependencies": {
 		"@cloudflare/vitest-plugin": "^1.4.3",
