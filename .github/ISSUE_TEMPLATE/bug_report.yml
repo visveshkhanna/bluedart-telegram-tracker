@@ -1,0 +1,30 @@
+name: Bug report
+description: Something isn't working as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant output from `npx wrangler tail` or the Workers dashboard. Remove tokens and personal details.
+      render: text
+  - type: input
+    id: status
+    attributes:
+      label: BlueDart status (for tracking issues)
+      description: The status shown on bluedart.com for the shipment, without personal details. Please don't paste the AWB.
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: How is it deployed?
+      options:
+        - Deploy to Cloudflare button
+        - Manual (Wrangler)
+        - Local development
