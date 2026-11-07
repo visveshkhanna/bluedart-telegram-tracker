@@ -20,7 +20,7 @@ export interface Shipment {
 	isActive: boolean;
 }
 
-interface ShipmentRow {
+export interface ShipmentRow {
 	id: number;
 	chat_id: number;
 	awb: string;
@@ -33,10 +33,10 @@ interface ShipmentRow {
 	is_active: number;
 }
 
-const SHIPMENT_COLUMNS =
+export const SHIPMENT_COLUMNS =
 	"id, chat_id, awb, label, last_status, last_status_text, last_location, last_event_at, last_checked_at, is_active";
 
-function toShipment(row: ShipmentRow): Shipment {
+export function toShipment(row: ShipmentRow): Shipment {
 	return {
 		id: row.id,
 		chatId: row.chat_id,
