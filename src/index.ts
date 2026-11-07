@@ -1,5 +1,6 @@
 import { Api, webhookCallback } from "grammy";
 import { createBot, ensureBotInfo } from "./bot";
+import { handleSetup } from "./setup";
 import { bluedartProvider } from "./tracker/bluedart";
 import { runTracker } from "./tracker/run";
 
@@ -18,6 +19,10 @@ export default {
 			const bot = createBot(env);
 			await ensureBotInfo(bot);
 			return webhookCallback(bot, "cloudflare-mod", { secretToken: env.WEBHOOK_SECRET })(request);
+		}
+
+		if (pathname === "/setup" && request.method === "GET") {
+			return handleSetup(request, env);
 		}
 
 		return new Response("ok");

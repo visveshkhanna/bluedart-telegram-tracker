@@ -31,3 +31,10 @@ describe("worker routes", () => {
 		expect(response.status).toBe(200);
 	});
 });
+
+describe("GET /setup", () => {
+	it("requires the webhook secret", async () => {
+		expect((await SELF.fetch("https://bot.example.com/setup")).status).toBe(401);
+		expect((await SELF.fetch("https://bot.example.com/setup?secret=wrong")).status).toBe(401);
+	});
+});

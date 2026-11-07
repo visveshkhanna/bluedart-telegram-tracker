@@ -1,14 +1,21 @@
 import type { Bot } from "grammy";
 import { escapeHtml } from "../utils/format";
 
+/** Single source for /help and the command menu registered by /setup. */
+export const BOT_COMMANDS = [
+	{ command: "track", args: "<AWB> [name]", description: "Start tracking a BlueDart shipment" },
+	{ command: "list", args: "", description: "Your shipments: refresh, rename, change check interval or stop" },
+	{ command: "status", args: "<AWB>", description: "Latest scans and expected delivery date" },
+	{ command: "rename", args: "<AWB> <name>", description: "Rename a shipment" },
+	{ command: "untrack", args: "<AWB>", description: "Stop tracking a shipment" },
+	{ command: "help", args: "", description: "Show the commands" },
+] as const;
+
 export const HELP_TEXT = [
 	"<b>Commands</b>",
-	"/track &lt;AWB&gt; [name] – start tracking a BlueDart shipment",
-	"/list – your shipments; tap one to refresh, rename, change how often it's checked, or stop",
-	"/status &lt;AWB&gt; – latest scans and expected delivery date",
-	"/rename &lt;AWB&gt; &lt;name&gt; – rename a shipment",
-	"/untrack &lt;AWB&gt; – stop tracking a shipment",
-	"/help – show this message",
+	...BOT_COMMANDS.map(({ command, args, description }) =>
+		`/${command}${args ? ` ${escapeHtml(args)}` : ""} – ${description}`,
+	),
 ].join("\n");
 
 export function registerStart(bot: Bot): void {
