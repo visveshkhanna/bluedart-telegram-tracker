@@ -1,17 +1,11 @@
-// All D1 access for users and shipments lives here.
-// SQL uses snake_case; the rest of the app uses the camelCase types below.
-
-export interface User {
-	chatId: number;
-	username?: string | null;
-	firstName?: string | null;
-}
+// Shipment reads and user-initiated changes. SQL is snake_case; the app uses camelCase.
 
 export interface Shipment {
 	id: number;
 	chatId: number;
 	awb: string;
 	label: string | null;
+	/** Key of the newest scan (see scanKey). */
 	lastStatus: string | null;
 	lastStatusText: string | null;
 	lastLocation: string | null;
@@ -39,9 +33,6 @@ export interface ShipmentRow {
 	is_active: number;
 }
 
-export const SHIPMENT_COLUMNS =
-	"id, chat_id, awb, label, last_status, last_status_text, last_location, last_event_at, last_checked_at, expected_delivery_date, check_interval_minutes, next_check_at, is_active";
-
 export function toShipment(row: ShipmentRow): Shipment {
 	return {
 		id: row.id,
@@ -60,103 +51,55 @@ export function toShipment(row: ShipmentRow): Shipment {
 	};
 }
 
-/** Insert or refresh a user. Talking to the bot again also clears `is_blocked`. */
-export async function upsertUser(db: D1Database, user: User): Promise<void> {
-	await db
-		.prepare(
-			`INSERT INTO users (chat_id, username, first_name)
-			 VALUES (?1, ?2, ?3)
-			 ON CONFLICT (chat_id) DO UPDATE SET
-			   username = excluded.username,
-			   first_name = excluded.first_name,
-			   is_blocked = 0`,
-		)
-		.bind(user.chatId, user.username ?? null, user.firstName ?? null)
-		.run();
-}
-
-export type AddShipmentResult = "added" | "reactivated" | "exists";
+export type AddShipmentResult = 'added' | 'reactivated' | 'exists';
 
 /**
- * Start tracking an AWB for a chat.
- * - new AWB → inserted ("added")
- * - previously untracked → reactivated ("reactivated")
- * - already active → label updated if one was given ("exists")
+ * Starts tracking an AWB for a chat. Re-adding an untracked AWB reactivates it, and
+ * re-adding an active one only updates the label (when one is given).
  */
-export async function addShipment(
-	db: D1Database,
-	chatId: number,
-	awb: string,
-	label: string | null,
-): Promise<AddShipmentResult> {
+export async function addShipment(db: D1Database, chatId: number, awb: string, label: string | null): Promise<AddShipmentResult> {
 	const existing = await db
-		.prepare("SELECT is_active FROM shipments WHERE chat_id = ?1 AND awb = ?2")
+		.prepare('SELECT is_active FROM shipments WHERE chat_id = ?1 AND awb = ?2')
 		.bind(chatId, awb)
 		.first<{ is_active: number }>();
 
 	if (!existing) {
-		await db
-			.prepare("INSERT INTO shipments (chat_id, awb, label) VALUES (?1, ?2, ?3)")
-			.bind(chatId, awb, label)
-			.run();
-		return "added";
+		await db.prepare('INSERT INTO shipments (chat_id, awb, label) VALUES (?1, ?2, ?3)').bind(chatId, awb, label).run();
+		return 'added';
 	}
 
 	await db
 		.prepare(
-			`UPDATE shipments
-			 SET is_active = 1, label = COALESCE(?3, label), updated_at = datetime('now')
+			`UPDATE shipments SET is_active = 1, label = COALESCE(?3, label), updated_at = datetime('now')
 			 WHERE chat_id = ?1 AND awb = ?2`,
 		)
 		.bind(chatId, awb, label)
 		.run();
-	return existing.is_active === 1 ? "exists" : "reactivated";
+	return existing.is_active === 1 ? 'exists' : 'reactivated';
 }
 
 export async function getShipment(db: D1Database, chatId: number, awb: string): Promise<Shipment | null> {
-	const row = await db
-		.prepare(`SELECT ${SHIPMENT_COLUMNS} FROM shipments WHERE chat_id = ?1 AND awb = ?2`)
-		.bind(chatId, awb)
-		.first<ShipmentRow>();
+	const row = await db.prepare('SELECT * FROM shipments WHERE chat_id = ?1 AND awb = ?2').bind(chatId, awb).first<ShipmentRow>();
 	return row ? toShipment(row) : null;
 }
 
-/** Looks a shipment up by id, but only within the given chat (callback data comes from the client). */
+/** Looks a shipment up by id within one chat, since ids in callback data come from the client. */
 export async function getShipmentById(db: D1Database, chatId: number, id: number): Promise<Shipment | null> {
-	const row = await db
-		.prepare(`SELECT ${SHIPMENT_COLUMNS} FROM shipments WHERE id = ?1 AND chat_id = ?2`)
-		.bind(id, chatId)
-		.first<ShipmentRow>();
+	const row = await db.prepare('SELECT * FROM shipments WHERE id = ?1 AND chat_id = ?2').bind(id, chatId).first<ShipmentRow>();
 	return row ? toShipment(row) : null;
 }
 
 /** Active shipments for one chat, newest first. */
 export async function listActiveShipments(db: D1Database, chatId: number): Promise<Shipment[]> {
 	const { results } = await db
-		.prepare(
-			`SELECT ${SHIPMENT_COLUMNS} FROM shipments
-			 WHERE chat_id = ?1 AND is_active = 1
-			 ORDER BY created_at DESC, id DESC`,
-		)
+		.prepare('SELECT * FROM shipments WHERE chat_id = ?1 AND is_active = 1 ORDER BY created_at DESC, id DESC')
 		.bind(chatId)
 		.all<ShipmentRow>();
 	return results.map(toShipment);
 }
 
-/** Stop tracking. Returns false if the AWB wasn't actively tracked by this chat. */
-export async function deactivateShipment(db: D1Database, chatId: number, awb: string): Promise<boolean> {
-	const result = await db
-		.prepare(
-			`UPDATE shipments SET is_active = 0, updated_at = datetime('now')
-			 WHERE chat_id = ?1 AND awb = ?2 AND is_active = 1`,
-		)
-		.bind(chatId, awb)
-		.run();
-	return result.meta.changes > 0;
-}
-
-/** Stop tracking by id. Returns false if it wasn't an active shipment of this chat. */
-export async function deactivateShipmentById(db: D1Database, chatId: number, id: number): Promise<boolean> {
+/** Stops tracking. Returns false if it wasn't an active shipment of this chat. */
+export async function deactivateShipment(db: D1Database, chatId: number, id: number): Promise<boolean> {
 	const result = await db
 		.prepare(
 			`UPDATE shipments SET is_active = 0, updated_at = datetime('now')
@@ -167,21 +110,20 @@ export async function deactivateShipmentById(db: D1Database, chatId: number, id:
 	return result.meta.changes > 0;
 }
 
-/** Sets a shipment's label; null clears it. Returns false if the shipment isn't this chat's. */
-export async function renameShipment(db: D1Database, chatId: number, id: number, label: string | null): Promise<boolean> {
-	const result = await db
+/** Sets the label; null clears it. */
+export async function renameShipment(db: D1Database, chatId: number, id: number, label: string | null): Promise<void> {
+	await db
 		.prepare("UPDATE shipments SET label = ?3, updated_at = datetime('now') WHERE id = ?1 AND chat_id = ?2")
 		.bind(id, chatId, label)
 		.run();
-	return result.meta.changes > 0;
 }
 
 /**
- * Changes how often a shipment is checked. The next check is rescheduled from the last
- * check (or now), so switching from "daily" to "15 min" takes effect right away.
+ * Changes the check interval and reschedules from the last check (or now), so going
+ * from "1 day" to "15 min" takes effect right away.
  */
-export async function setCheckInterval(db: D1Database, chatId: number, id: number, minutes: number): Promise<boolean> {
-	const result = await db
+export async function setCheckInterval(db: D1Database, chatId: number, id: number, minutes: number): Promise<void> {
+	await db
 		.prepare(
 			`UPDATE shipments SET
 			   check_interval_minutes = ?3,
@@ -191,5 +133,4 @@ export async function setCheckInterval(db: D1Database, chatId: number, id: numbe
 		)
 		.bind(id, chatId, minutes)
 		.run();
-	return result.meta.changes > 0;
 }
