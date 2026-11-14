@@ -56,7 +56,7 @@
 	},
 	"dependencies": {
 		"grammy": "^1.46.0",
-		"node-html-parser": "9.0.5"
+		"node-html-parser": "9.0.7"
 	},
 	"devDependencies": {
 		"@cloudflare/vitest-plugin": "^1.4.3",
